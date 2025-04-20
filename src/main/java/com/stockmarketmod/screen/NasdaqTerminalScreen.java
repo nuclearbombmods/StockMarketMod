@@ -20,12 +20,10 @@ public class NasdaqTerminalScreen extends Screen {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final DecimalFormat PRICE_FORMAT = new DecimalFormat("#,##0.00");
     private static final DecimalFormat CHANGE_FORMAT = new DecimalFormat("+#,##0.00;-#,##0.00");
-    private static final int HEADER_HEIGHT = 2;
     private static final int SECTION_SPACING = 10;
     private static final int ROW_HEIGHT = 15;
     private static final int COLUMN_SPACING = 10;
     private static final int ACTION_ICON_SIZE = 10;
-    private static final int REFRESH_ICON_SIZE = 16;
     private static final int POPUP_WIDTH = 200;
     private static final int POPUP_HEIGHT = 100;
     
@@ -188,15 +186,10 @@ public class NasdaqTerminalScreen extends Screen {
     }
 
     private void renderMarketSection(GuiGraphics guiGraphics, int x, int y, int width, int height) {
-        // Draw title and wealth
-        
-        // guiGraphics.drawString(font, "NASDAQ Terminal", x + 10, y, 0xFFFFFF);
         Portfolio portfolio = stockMarketService.getPortfolio(minecraft.player);
-        // String wealthText = String.format("Total Wealth: %.2f", calculateTotalWealth(portfolio));
-        // guiGraphics.drawString(font, wealthText, x + width - font.width(wealthText) - 10, y, 0xFFFFFF);
         
         // Section title
-        int marketY = y + HEADER_HEIGHT;
+        int marketY = y + 2; // Using inline value instead of HEADER_HEIGHT constant
         guiGraphics.drawString(font, "MARKET OVERVIEW", x + 10, marketY, 0xFFFFFF);
         
         // Draw headers
@@ -358,21 +351,6 @@ public class NasdaqTerminalScreen extends Screen {
         }
     }
 
-    private double calculateTotalWealth(Portfolio portfolio) {
-        double totalWealth = portfolio.getBalance();
-        Map<String, Integer> holdings = portfolio.getAllHoldings();
-        Map<String, Stock> stocks = stockMarketService.getAllStocks();
-        
-        for (Map.Entry<String, Integer> entry : holdings.entrySet()) {
-            Stock stock = stocks.get(entry.getKey());
-            if (stock != null) {
-                totalWealth += stock.getCurrentPrice() * entry.getValue();
-            }
-        }
-        
-        return totalWealth;
-    }
-
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (keyCode == 256) { // ESC key
@@ -397,15 +375,8 @@ public class NasdaqTerminalScreen extends Screen {
             return true; // Block clicks outside popup
         }
         
-        // Handle refresh icon click
-        if (mouseY >= 7 && mouseY < 7 + REFRESH_ICON_SIZE && 
-            mouseX >= width - REFRESH_ICON_SIZE - 20 && mouseX < width - 20) {
-            handleRefresh();
-            return true;
-        }
-        
         // Handle stock selection and action icons
-        int marketY = HEADER_HEIGHT + 40; // Start after headers
+        int marketY = 26; // Start after headers (10 + 16)
         int rowY = marketY;
         Map<String, Stock> stocks = stockMarketService.getAllStocks();
         Portfolio portfolio = stockMarketService.getPortfolio(minecraft.player);
