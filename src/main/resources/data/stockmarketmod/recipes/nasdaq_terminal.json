@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "DRD",
+    "RDR",
+    "DRD"
+  ],
+  "key": {
+    "D": {
+      "item": "minecraft:diamond"
+    },
+    "R": {
+      "item": "minecraft:redstone"
+    }
+  },
+  "result": {
+    "item": "stockmarketmod:nasdaq_terminal"
+  }
+} 

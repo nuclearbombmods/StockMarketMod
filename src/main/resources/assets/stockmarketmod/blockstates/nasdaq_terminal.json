@@ -1,0 +1,5 @@
+{
+    "variants": {
+        "": { "model": "stockmarketmod:block/nasdaq_terminal" }
+    }
+} 

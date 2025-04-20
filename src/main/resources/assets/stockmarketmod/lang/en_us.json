@@ -1,0 +1,12 @@
+{
+  "subtitles.stockmarketmod.trade_success": "Trade successful",
+  "subtitles.stockmarketmod.trade_fail": "Trade failed",
+  "subtitles.stockmarketmod.market_update": "Market update",
+  
+  "container.stockmarketmod.nasdaq_terminal": "Nasdaq Terminal",
+  "container.stockmarketmod.quantity": "Quantity",
+  "container.stockmarketmod.buy": "Buy",
+  "container.stockmarketmod.sell": "Sell",
+  "container.stockmarketmod.deposit": "Deposit",
+  "container.stockmarketmod.withdraw": "Withdraw"
+} 

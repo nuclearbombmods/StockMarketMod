@@ -1,0 +1,33 @@
+# Gradle
+.gradle/
+build/
+out/
+classes/
+
+# IDE
+.idea/
+*.iml
+*.iws
+.vscode/
+
+# Minecraft
+run/
+eclipse/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Gradle Wrapper
+!gradle/wrapper/gradle-wrapper.jar
+
+# Forge
+forge-*.jar
+.minecraft/
+
+# Files from Forge MDK
+forge*changelog.txt

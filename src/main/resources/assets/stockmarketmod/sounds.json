@@ -1,0 +1,20 @@
+{
+  "trade_success": {
+    "sounds": [
+      "stockmarketmod:trade_success"
+    ],
+    "subtitle": "subtitles.stockmarketmod.trade_success"
+  },
+  "trade_fail": {
+    "sounds": [
+      "stockmarketmod:trade_fail"
+    ],
+    "subtitle": "subtitles.stockmarketmod.trade_fail"
+  },
+  "market_update": {
+    "sounds": [
+      "stockmarketmod:market_update"
+    ],
+    "subtitle": "subtitles.stockmarketmod.market_update"
+  }
+} 

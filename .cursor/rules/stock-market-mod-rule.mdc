@@ -1,0 +1,13 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# Your rule content
+Minecraft Version	1.20.1
+Forge Version	47.4.0
+ForgeGradle	5.x
+Gradle Version 7.6.1
+Java Version Java 17
+Java Path C:\Program Files\Eclipse Adoptium\jdk-17.0.14.7-hotspot
