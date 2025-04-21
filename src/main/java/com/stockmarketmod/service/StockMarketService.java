@@ -162,8 +162,6 @@ public class StockMarketService {
     }
 
     public boolean buyStock(Player player, String symbol, int quantity) {
-        if (!(player instanceof ServerPlayer serverPlayer)) return false;
-        
         Stock stock = stocks.get(symbol);
         if (stock == null) return false;
         
@@ -173,18 +171,20 @@ public class StockMarketService {
         if (portfolio.subtractBalance(totalCost)) {
             portfolio.addHolding(symbol, quantity);
             stock.addVolume(quantity);
-            serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
-                ModSounds.TRADE_SUCCESS.get(), SoundSource.MASTER, 1.0f, 1.0f);
+            if (player instanceof ServerPlayer serverPlayer) {
+                serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
+                    ModSounds.TRADE_SUCCESS.get(), SoundSource.MASTER, 1.0f, 1.0f);
+            }
             return true;
         }
-        serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
-            ModSounds.TRADE_FAIL.get(), SoundSource.MASTER, 1.0f, 1.0f);
+        if (player instanceof ServerPlayer serverPlayer) {
+            serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
+                ModSounds.TRADE_FAIL.get(), SoundSource.MASTER, 1.0f, 1.0f);
+        }
         return false;
     }
 
     public boolean sellStock(Player player, String symbol, int quantity) {
-        if (!(player instanceof ServerPlayer serverPlayer)) return false;
-        
         Stock stock = stocks.get(symbol);
         if (stock == null) return false;
         
@@ -194,25 +194,32 @@ public class StockMarketService {
             double totalValue = stock.getCurrentPrice() * quantity;
             portfolio.addBalance(totalValue);
             stock.addVolume(quantity);
-            serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
-                ModSounds.TRADE_SUCCESS.get(), SoundSource.MASTER, 1.0f, 1.0f);
+            if (player instanceof ServerPlayer serverPlayer) {
+                serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
+                    ModSounds.TRADE_SUCCESS.get(), SoundSource.MASTER, 1.0f, 1.0f);
+            }
             return true;
         }
-        serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
-            ModSounds.TRADE_FAIL.get(), SoundSource.MASTER, 1.0f, 1.0f);
+        if (player instanceof ServerPlayer serverPlayer) {
+            serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
+                ModSounds.TRADE_FAIL.get(), SoundSource.MASTER, 1.0f, 1.0f);
+        }
         return false;
     }
 
     public boolean depositEmeralds(Player player, int count) {
-        if (!(player instanceof ServerPlayer serverPlayer)) return false;
         Portfolio portfolio = getPortfolio(player);
         boolean success = portfolio.depositEmeralds(player, count);
         if (success) {
-            serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
-                ModSounds.TRADE_SUCCESS.get(), SoundSource.MASTER, 1.0f, 1.0f);
+            if (player instanceof ServerPlayer serverPlayer) {
+                serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
+                    ModSounds.TRADE_SUCCESS.get(), SoundSource.MASTER, 1.0f, 1.0f);
+            }
         } else {
-            serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
-                ModSounds.TRADE_FAIL.get(), SoundSource.MASTER, 1.0f, 1.0f);
+            if (player instanceof ServerPlayer serverPlayer) {
+                serverPlayer.level().playSound(null, serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
+                    ModSounds.TRADE_FAIL.get(), SoundSource.MASTER, 1.0f, 1.0f);
+            }
         }
         return success;
     }

@@ -74,12 +74,25 @@ public class Portfolio {
 
     public boolean depositEmeralds(Player player, int count) {
         int emeraldsToRemove = 0;
-        for (ItemStack stack : player.getInventory().items) {
+        
+        // Check all inventory slots including hotbar
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+            ItemStack stack = player.getInventory().getItem(i);
             if (stack.getItem() == Items.EMERALD) {
                 int removeAmount = Math.min(count - emeraldsToRemove, stack.getCount());
                 stack.shrink(removeAmount);
                 emeraldsToRemove += removeAmount;
                 if (emeraldsToRemove >= count) break;
+            }
+        }
+        
+        // Check offhand if we still need more emeralds
+        if (emeraldsToRemove < count) {
+            ItemStack offhandStack = player.getOffhandItem();
+            if (offhandStack.getItem() == Items.EMERALD) {
+                int removeAmount = Math.min(count - emeraldsToRemove, offhandStack.getCount());
+                offhandStack.shrink(removeAmount);
+                emeraldsToRemove += removeAmount;
             }
         }
         
