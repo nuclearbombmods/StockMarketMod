@@ -1,37 +1,138 @@
 package com.stockmarketmod.service;
 
+import com.stockmarketmod.model.Market;
 import com.stockmarketmod.model.MarketHistory;
 import com.stockmarketmod.model.Portfolio;
 import com.stockmarketmod.model.Stock;
+import com.stockmarketmod.model.Order;
 import com.stockmarketmod.sound.ModSounds;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.saveddata.SavedData;
+import net.minecraft.world.level.storage.DimensionDataStorage;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
 
-public class StockMarketService {
-    private static final StockMarketService INSTANCE = new StockMarketService();
+public class StockMarketService extends SavedData {
+    private static final String DATA_NAME = "stock_market_data";
+    private static StockMarketService INSTANCE;
     private final Map<String, Stock> stocks = new HashMap<>();
     private final Map<UUID, Portfolio> portfolios = new HashMap<>();
     private final MarketHistory marketHistory = new MarketHistory();
     private final Random random = new Random();
     private long lastUpdateTime = 0;
-    private static final long UPDATE_INTERVAL = 20 * 60 * 20; // 20 minutes in ticks
+    private static final long UPDATE_INTERVAL = 20 * 60; // 1 minute in ticks
     private static final double EVENT_CHANCE = 0.1; // 10% chance of market event
+    private Market market;
 
     private StockMarketService() {
         initializeStocks();
+        initializeMarket();
+    }
+
+    private void initializeMarket() {
+        if (market == null) {
+            market = new Market();
+            // Initialize stocks in the market
+            for (Map.Entry<String, Stock> entry : stocks.entrySet()) {
+                market.registerStock(entry.getKey(), entry.getValue().getCurrentPrice(), 0.1); // Default volatility of 0.1
+            }
+        }
     }
 
     public static StockMarketService getInstance() {
+        if (INSTANCE == null) {
+            INSTANCE = new StockMarketService();
+        }
         return INSTANCE;
+    }
+
+    public static StockMarketService get(ServerLevel level) {
+        if (INSTANCE != null) {
+            return INSTANCE;
+        }
+        DimensionDataStorage storage = level.getDataStorage();
+        INSTANCE = storage.computeIfAbsent(StockMarketService::load, StockMarketService::new, DATA_NAME);
+        return INSTANCE;
+    }
+
+    public static StockMarketService load(CompoundTag tag) {
+        StockMarketService service = new StockMarketService();
+        
+        // Load stocks
+        ListTag stocksList = tag.getList("stocks", Tag.TAG_COMPOUND);
+        for (int i = 0; i < stocksList.size(); i++) {
+            CompoundTag stockTag = stocksList.getCompound(i);
+            Stock stock = new Stock(stockTag.getString("symbol"), stockTag.getString("name"), 0.0);
+            stock.deserializeNBT(stockTag);
+            service.stocks.put(stock.getSymbol(), stock);
+        }
+        
+        // Load portfolios
+        ListTag portfoliosList = tag.getList("portfolios", Tag.TAG_COMPOUND);
+        for (int i = 0; i < portfoliosList.size(); i++) {
+            CompoundTag portfolioTag = portfoliosList.getCompound(i);
+            UUID playerId = portfolioTag.getUUID("playerId");
+            Portfolio portfolio = new Portfolio(playerId);
+            portfolio.deserializeNBT(portfolioTag);
+            service.portfolios.put(playerId, portfolio);
+        }
+        
+        // Load market history
+        service.marketHistory.deserializeNBT(tag.getCompound("marketHistory"));
+        
+        // Load other data
+        service.lastUpdateTime = tag.getLong("lastUpdateTime");
+
+        // Load market data
+        if (tag.contains("market")) {
+            service.market = new Market();
+            service.market.deserializeNBT(tag.getCompound("market"));
+        } else {
+            service.initializeMarket();
+        }
+        
+        return service;
+    }
+
+    @Override
+    public CompoundTag save(CompoundTag tag) {
+        // Save stocks
+        ListTag stocksList = new ListTag();
+        for (Stock stock : stocks.values()) {
+            stocksList.add(stock.serializeNBT());
+        }
+        tag.put("stocks", stocksList);
+        
+        // Save portfolios
+        ListTag portfoliosList = new ListTag();
+        for (Portfolio portfolio : portfolios.values()) {
+            portfoliosList.add(portfolio.serializeNBT());
+        }
+        tag.put("portfolios", portfoliosList);
+        
+        // Save market history
+        tag.put("marketHistory", marketHistory.serializeNBT());
+        
+        // Save other data
+        tag.putLong("lastUpdateTime", lastUpdateTime);
+
+        // Save market data
+        if (market != null) {
+            tag.put("market", market.serializeNBT());
+        }
+        
+        return tag;
     }
 
     private void initializeStocks() {
@@ -146,7 +247,29 @@ public class StockMarketService {
         long volume = random.nextInt(1000) + 100;
         stock.addVolume(volume);
         
+        // Update stock price
         stock.setCurrentPrice(newPrice);
+        
+        // Add simulated orders to create market depth
+        if (market != null) {
+            // Add some buy orders
+            for (int i = 0; i < 5; i++) {
+                double buyPrice = newPrice * (0.95 + random.nextDouble() * 0.05); // 95-100% of current price
+                int buyQuantity = random.nextInt(100) + 10;
+                Order buyOrder = new Order(UUID.randomUUID(), UUID.randomUUID(), stock.getSymbol(), 
+                    Order.OrderType.BUY, buyPrice, buyQuantity);
+                market.addOrder(buyOrder);
+            }
+            
+            // Add some sell orders
+            for (int i = 0; i < 5; i++) {
+                double sellPrice = newPrice * (1.0 + random.nextDouble() * 0.05); // 100-105% of current price
+                int sellQuantity = random.nextInt(100) + 10;
+                Order sellOrder = new Order(UUID.randomUUID(), UUID.randomUUID(), stock.getSymbol(), 
+                    Order.OrderType.SELL, sellPrice, sellQuantity);
+                market.addOrder(sellOrder);
+            }
+        }
     }
 
     public Stock getStock(String symbol) {
@@ -246,5 +369,16 @@ public class StockMarketService {
         // Force an immediate market update by resetting the last update time
         lastUpdateTime = 0;
         // The actual update will happen on the next tick through the normal update mechanism
+    }
+
+    public Market getMarket() {
+        if (market == null) {
+            market = new Market();
+            // Re-initialize stocks in case this is called after initialization
+            for (Map.Entry<String, Stock> entry : stocks.entrySet()) {
+                market.registerStock(entry.getKey(), entry.getValue().getCurrentPrice(), 0.1);
+            }
+        }
+        return market;
     }
 } 

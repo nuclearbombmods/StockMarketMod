@@ -1,6 +1,9 @@
 package com.stockmarketmod.model;
 
-public class Stock {
+import net.minecraft.nbt.CompoundTag;
+import net.minecraftforge.common.util.INBTSerializable;
+
+public class Stock implements INBTSerializable<CompoundTag> {
     private final String symbol;
     private final String name;
     private double currentPrice;
@@ -64,5 +67,28 @@ public class Stock {
 
     public double getPriceChangePercentage() {
         return (getPriceChange() / previousPrice) * 100;
+    }
+
+    @Override
+    public CompoundTag serializeNBT() {
+        CompoundTag tag = new CompoundTag();
+        tag.putString("symbol", symbol);
+        tag.putString("name", name);
+        tag.putDouble("currentPrice", currentPrice);
+        tag.putDouble("previousPrice", previousPrice);
+        tag.putDouble("highPrice", highPrice);
+        tag.putDouble("lowPrice", lowPrice);
+        tag.putLong("volume", volume);
+        return tag;
+    }
+
+    @Override
+    public void deserializeNBT(CompoundTag tag) {
+        // symbol and name are final and set in constructor
+        currentPrice = tag.getDouble("currentPrice");
+        previousPrice = tag.getDouble("previousPrice");
+        highPrice = tag.getDouble("highPrice");
+        lowPrice = tag.getDouble("lowPrice");
+        volume = tag.getLong("volume");
     }
 } 

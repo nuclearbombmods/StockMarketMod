@@ -7,6 +7,7 @@ import com.stockmarketmod.screen.NasdaqTerminalMenu;
 import com.stockmarketmod.service.StockMarketService;
 import com.stockmarketmod.sound.ModSounds;
 import net.minecraft.client.Minecraft;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
@@ -68,8 +69,14 @@ public class StockMarketMod {
         // Register our mod's ForgeConfigSpec so that Forge can create and load the config file for us
         context.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
         
-        // Initialize services
-        stockMarketService = StockMarketService.getInstance();
+        // Initialize the stock market service
+        this.stockMarketService = StockMarketService.getInstance();
+        
+        // Register the mod event bus for the client setup
+        modEventBus.addListener((FMLClientSetupEvent event) -> {
+            LOGGER.info("Stock Market Mod client setup");
+            LOGGER.info("MINECRAFT NAME >> {}", Minecraft.getInstance().getUser().getName());
+        });
     }
     
     private void addCreative(BuildCreativeModeTabContentsEvent event) {
@@ -85,14 +92,18 @@ public class StockMarketMod {
 
     @SubscribeEvent
     public void onServerStarting(ServerStartingEvent event) {
-        // Do something when the server starts
+        // Initialize the stock market service for the server
+        ServerLevel level = event.getServer().overworld();
+        StockMarketService.get(level);
         LOGGER.info("Stock Market Mod server starting");
     }
 
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
-            stockMarketService.updateMarket(event.getServer().overworld());
+            ServerLevel level = event.getServer().overworld();
+            StockMarketService service = StockMarketService.get(level);
+            service.updateMarket(level);
         }
     }
 

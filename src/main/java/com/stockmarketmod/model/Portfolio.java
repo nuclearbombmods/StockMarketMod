@@ -1,14 +1,18 @@
 package com.stockmarketmod.model;
 
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraftforge.common.util.INBTSerializable;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-public class Portfolio {
+public class Portfolio implements INBTSerializable<CompoundTag> {
     private final UUID playerId;
     private double balance;
     private final Map<String, Integer> holdings;
@@ -125,5 +129,38 @@ public class Portfolio {
             return remaining == 0;
         }
         return false;
+    }
+
+    @Override
+    public CompoundTag serializeNBT() {
+        CompoundTag tag = new CompoundTag();
+        tag.putUUID("playerId", playerId);
+        tag.putDouble("balance", balance);
+        
+        ListTag holdingsList = new ListTag();
+        for (Map.Entry<String, Integer> entry : holdings.entrySet()) {
+            CompoundTag holdingTag = new CompoundTag();
+            holdingTag.putString("symbol", entry.getKey());
+            holdingTag.putInt("quantity", entry.getValue());
+            holdingsList.add(holdingTag);
+        }
+        tag.put("holdings", holdingsList);
+        
+        return tag;
+    }
+
+    @Override
+    public void deserializeNBT(CompoundTag tag) {
+        // playerId is set in constructor
+        balance = tag.getDouble("balance");
+        
+        holdings.clear();
+        ListTag holdingsList = tag.getList("holdings", Tag.TAG_COMPOUND);
+        for (int i = 0; i < holdingsList.size(); i++) {
+            CompoundTag holdingTag = holdingsList.getCompound(i);
+            String symbol = holdingTag.getString("symbol");
+            int quantity = holdingTag.getInt("quantity");
+            holdings.put(symbol, quantity);
+        }
     }
 } 
