@@ -1,9 +1,15 @@
 package com.stockmarketmod.screen;
 
 import com.mojang.logging.LogUtils;
+import com.stockmarketmod.model.Market;
+import com.stockmarketmod.model.Market.MarketDepth;
+import com.stockmarketmod.model.Market.PriceLevel;
+import com.stockmarketmod.model.Order;
 import com.stockmarketmod.model.Portfolio;
+import com.stockmarketmod.model.PortfolioItem;
 import com.stockmarketmod.model.Stock;
 import com.stockmarketmod.service.StockMarketService;
+import com.stockmarketmod.Config;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -13,9 +19,13 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import org.slf4j.Logger;
 import net.minecraft.ChatFormatting;
+import com.stockmarketmod.model.MarketHistory;
 
 import java.text.DecimalFormat;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 public class NasdaqTerminalScreen extends Screen {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -29,7 +39,7 @@ public class NasdaqTerminalScreen extends Screen {
     private static final int ACTION_ICON_SIZE = 10;
     private static final int POPUP_WIDTH = 200;
     private static final int POPUP_HEIGHT = 100;
-    private static final int DEPOSIT_BUTTON_WIDTH = 80; // Reduced from 100
+    private static final int DEPOSIT_BUTTON_WIDTH = 80;
     private static final int DEPOSIT_BUTTON_HEIGHT = 15;
     
     // Column widths
@@ -42,35 +52,59 @@ public class NasdaqTerminalScreen extends Screen {
     private static final int SCREEN_WIDTH = 
         SYMBOL_WIDTH + NAME_WIDTH + PRICE_WIDTH + CHANGE_WIDTH + VOLUME_WIDTH + ACTIONS_WIDTH + (COLUMN_SPACING * 8);
     
-    private static final int VISIBLE_ROWS = 6; // Fixed number of visible rows for each section
-    private int firstVisibleStockIndex = 0; // Index of first visible stock
-    private int firstVisiblePortfolioIndex = 0; // Index of first visible portfolio item
+    private static final int VISIBLE_ROWS = 6;
+    private int firstVisibleStockIndex = 0;
+    private int firstVisiblePortfolioIndex = 0;
     
     private final StockMarketService stockMarketService;
-    private String selectedStock = null;
-    private int scrollOffset = 0; // Add this field to track scroll position
+    private Stock selectedStock = null;
+    private int scrollOffset = 0;
+    private boolean isScrolling = false;
+    private int lastMouseY = 0;
+
+    private int leftPos;
+    private int topPos;
+    private int imageWidth;
+    private int imageHeight;
+    private Portfolio portfolio;
 
     // Transaction popup state
     private boolean showTransactionPopup = false;
     private boolean showDepositPopup = false;
-    private String transactionType = ""; // "buy" or "sell"
+    private String transactionType = "";
     private EditBox quantityInput;
     private EditBox depositInput;
     private Button confirmButton;
     private Button cancelButton;
     private Button depositButton;
-    private String depositErrorMessage = null; // Add this field at the class level
+    private String depositErrorMessage = null;
+
+    private static final int MARKET_SECTION_HEIGHT = 100;
+    private static final int PORTFOLIO_HEADER_HEIGHT = 20;
+    private static final int PORTFOLIO_SECTION_HEIGHT = 200;
+    private static final int SCROLL_BAR_WIDTH = 6;
+    private static final int SCROLL_BAR_PADDING = 2;
+
+    private Market market;
 
     public NasdaqTerminalScreen() {
-        super(Component.literal("Terminal"));
+        super(Component.literal("NASDAQ Terminal"));
         this.stockMarketService = StockMarketService.getInstance();
-        LOGGER.info("Initializing full-screen Terminal");
+        this.market = stockMarketService.getMarket();
+        this.portfolio = null;
+        
+        this.imageWidth = SCREEN_WIDTH;
+        this.imageHeight = MARKET_SECTION_HEIGHT + PORTFOLIO_SECTION_HEIGHT + SECTION_SPACING * 3;
     }
 
     @Override
-    protected void init() {
+    public void init() {
         super.init();
-        LOGGER.info("Initializing Terminal screen components");
+        if (minecraft != null && minecraft.player != null) {
+            this.portfolio = stockMarketService.getPortfolio(minecraft.player);
+        }
+        this.leftPos = (this.width - this.imageWidth) / 2;
+        this.topPos = (this.height - this.imageHeight) / 2;
         
         // Initialize transaction popup components
         quantityInput = new EditBox(this.font, 
@@ -124,7 +158,7 @@ public class NasdaqTerminalScreen extends Screen {
         depositButton = Button.builder(Component.literal("Deposit"), button -> {
             showDepositPopup();
         })
-        .pos(width - DEPOSIT_BUTTON_WIDTH - 10, 5) // Moved up to 5px from top
+        .pos(width - DEPOSIT_BUTTON_WIDTH - 10, 5) // Reverted to original position
         .size(DEPOSIT_BUTTON_WIDTH, DEPOSIT_BUTTON_HEIGHT)
         .build();
         
@@ -150,31 +184,36 @@ public class NasdaqTerminalScreen extends Screen {
     private void hideTransactionPopup() {
         showTransactionPopup = false;
         clearWidgets();
+        addRenderableWidget(depositButton);
     }
 
     private void handleTransaction() {
-        LOGGER.info("Handling transaction for stock: {}", selectedStock);
-        if (selectedStock != null) {
-            try {
-                int quantity = Integer.parseInt(quantityInput.getValue());
-                LOGGER.info("Transaction quantity: {}", quantity);
-                if (quantity > 0) {
-                    boolean success = false;
-                    if (transactionType.equals("buy")) {
-                        success = stockMarketService.buyStock(minecraft.player, selectedStock, quantity);
-                        LOGGER.info("Buy transaction result: {}", success);
-                    } else if (transactionType.equals("sell")) {
-                        success = stockMarketService.sellStock(minecraft.player, selectedStock, quantity);
-                        LOGGER.info("Sell transaction result: {}", success);
-                    }
-                    
-                    if (success) {
-                        hideTransactionPopup();
-                    }
-                }
-            } catch (NumberFormatException e) {
-                LOGGER.error("Invalid quantity input: {}", quantityInput.getValue());
+        if (minecraft.player == null) return;
+        
+        try {
+            int quantity = Integer.parseInt(quantityInput.getValue());
+            if (quantity <= 0) {
+                LOGGER.warn("Invalid quantity: {}", quantity);
+                return;
             }
+            
+            if (transactionType.equals("buy")) {
+                stockMarketService.buyStock(minecraft.player, selectedStock.getSymbol(), quantity);
+            } else if (transactionType.equals("sell")) {
+                stockMarketService.sellStock(minecraft.player, selectedStock.getSymbol(), quantity);
+            }
+            
+            // Place order in market
+            Market market = stockMarketService.getMarket();
+            if (market != null) {
+                Order.OrderType orderType = transactionType.equals("buy") ? Order.OrderType.BUY : Order.OrderType.SELL;
+                Order order = new Order(UUID.randomUUID(), minecraft.player.getUUID(), selectedStock.getSymbol(), orderType, selectedStock.getCurrentPrice(), quantity);
+                market.placeOrder(order);
+            }
+            
+            showTransactionPopup = false;
+        } catch (NumberFormatException e) {
+            LOGGER.warn("Invalid quantity format: {}", quantityInput.getValue());
         }
     }
 
@@ -285,167 +324,134 @@ public class NasdaqTerminalScreen extends Screen {
     }
 
     @Override
-    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        // Draw the background terminal first
-        renderBackground(guiGraphics);
+    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTicks) {
+        this.renderBackground(graphics);
         
-        if (showTransactionPopup || showDepositPopup) {
-            // Draw solid black background for the entire screen
-            guiGraphics.fill(0, 0, this.width, this.height, 0xFF000000);
-            
-            // Draw the popup with a solid white background
-            int popupX = width / 2 - POPUP_WIDTH / 2;
-            int popupY = height / 2 - POPUP_HEIGHT / 2;
-            
-            // Draw solid white background for popup
-            guiGraphics.fill(popupX, popupY, popupX + POPUP_WIDTH, popupY + POPUP_HEIGHT, 0xFFFFFFFF);
-            
-            if (showTransactionPopup) {
-                // Draw transaction popup content with stock name
-                Stock stock = stockMarketService.getStock(selectedStock);
-                String title = transactionType.equals("buy") ? 
-                    String.format("BUY %s", stock != null ? stock.getSymbol() : "") : 
-                    String.format("SELL %s", stock != null ? stock.getSymbol() : "");
-                guiGraphics.drawString(font, title, 
-                    width / 2 - font.width(title) / 2,
-                    popupY + 10,
-                    0x000000, false);
-                
-                // Draw stock info in black
-                if (stock != null) {
-                    String stockInfo = String.format("%s - %s", stock.getSymbol(), stock.getName());
-                    guiGraphics.drawString(font, stockInfo,
-                        width / 2 - font.width(stockInfo) / 2,
-                        popupY + 30,
-                        0x000000, false);
-                }
-            } else {
-                // Draw deposit popup content
-                String title = "Deposit Emeralds";
-                guiGraphics.drawString(font, title,
-                    width / 2 - font.width(title) / 2,
-                    popupY + 10,
-                    0x000000, false);
-
-                // Draw input box background
-                int inputX = width / 2 - POPUP_WIDTH / 2 + 10;
-                int inputY = height / 2 - POPUP_HEIGHT / 2 + 30;
-                guiGraphics.fill(inputX - 1, inputY - 1, 
-                    inputX + POPUP_WIDTH - 20 + 1, inputY + 20 + 1, 
-                    0xFF808080); // Gray border
-                guiGraphics.fill(inputX, inputY,
-                    inputX + POPUP_WIDTH - 20, inputY + 20,
-                    0xFFFFFFFF); // White background
-
-                // Calculate and show value
-                try {
-                    int quantity = Integer.parseInt(depositInput.getValue());
-                    double value = quantity * 100.0; // Each emerald is worth 100
-                    String valueText = String.format("Value: %,.2f", value);
-                    guiGraphics.drawString(font, valueText,
-                        width / 2 - font.width(valueText) / 2,
-                        popupY + 30,
-                        0x000000, false);
-                } catch (NumberFormatException e) {
-                    // Ignore invalid input, will be handled in handleDeposit
-                }
-
-                // Draw error message if exists
-                if (depositErrorMessage != null) {
-                    guiGraphics.drawString(font, depositErrorMessage,
-                        width / 2 - font.width(depositErrorMessage) / 2,
-                        popupY + 60,
-                        0xFF0000, false);
-                }
-            }
-        } else {
-            // Draw market section
-            int marketY = TITLE_HEIGHT;
-            renderMarketSection(guiGraphics, 0, marketY, width, (VISIBLE_ROWS + 1) * ROW_HEIGHT);
-            
-            // Draw portfolio section with extra spacing
-            int portfolioY = marketY + (VISIBLE_ROWS + 1) * ROW_HEIGHT + SECTION_SPACING + 10; // Added extra 10 pixels
-            renderPortfolioSection(guiGraphics, 0, portfolioY, width, (VISIBLE_ROWS + 1) * ROW_HEIGHT);
+        // Draw dark background
+        graphics.fill(0, 0, this.width, this.height, 0xAA000000);
+        
+        // Draw main container
+        int x = (this.width - this.imageWidth) / 2;
+        int y = (this.height - this.imageHeight) / 2;
+        graphics.fill(x, y, x + this.imageWidth, y + this.imageHeight, 0xFF333333);
+        
+        // Draw title
+        Component title = Component.literal("NASDAQ Terminal").withStyle(ChatFormatting.GOLD);
+        graphics.drawString(this.font, title, 
+            (this.width - this.font.width(title)) / 2, 
+            y + 10, 
+            0xFFFFFF);
+        
+        // Draw market section
+        drawMarketSection(graphics, mouseX, mouseY);
+        
+        // Draw portfolio section
+        drawPortfolioSection(graphics, mouseX, mouseY);
+        
+        // Draw popups if active
+        if (showTransactionPopup) {
+            drawTransactionPopup(graphics, mouseX, mouseY);
+        }
+        if (showDepositPopup) {
+            drawDepositPopup(graphics, mouseX, mouseY);
         }
         
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
+        super.render(graphics, mouseX, mouseY, partialTicks);
     }
 
-    private void renderMarketSection(GuiGraphics guiGraphics, int x, int y, int width, int height) {
-        // Section title
-        guiGraphics.drawString(font, "MARKET OVERVIEW", x + 10, y, 0xFFFFFF);
+    private void drawMarketSection(GuiGraphics graphics, int mouseX, int mouseY) {
+        int x = (width - imageWidth) / 2;
+        int y = DEPOSIT_BUTTON_HEIGHT + 10; // Position just below the deposit button with some padding
         
-        // Draw headers
+        // Draw section background
+        graphics.fill(x, y, x + imageWidth, y + MARKET_SECTION_HEIGHT, 0xFF222222);
+        
+        // Draw section title
+        Component sectionTitle = Component.literal("Market Overview").withStyle(ChatFormatting.YELLOW);
+        graphics.drawString(font, sectionTitle, 
+            x + 10, 
+            y + 5, 
+            0xFFFFFF);
+            
+        // Draw column headers
         int headerY = y + HEADER_HEIGHT;
-        int columnX = x + 10;
-
-        guiGraphics.fillGradient(x, headerY - 2, x + SCREEN_WIDTH, headerY + ROW_HEIGHT - 4, 0x40FFFFFF, 0x40FFFFFF);
+        int currentX = x + 10;
         
-        guiGraphics.drawString(font, "Symbol", columnX, headerY, 0xFFFFFF);
-        columnX += SYMBOL_WIDTH + COLUMN_SPACING;
+        graphics.drawString(font, "Symbol", currentX, headerY, 0xFFFFFF);
+        currentX += SYMBOL_WIDTH + COLUMN_SPACING;
         
-        guiGraphics.drawString(font, "Name", columnX, headerY, 0xFFFFFF);
-        columnX += NAME_WIDTH + COLUMN_SPACING;
+        graphics.drawString(font, "Name", currentX, headerY, 0xFFFFFF);
+        currentX += NAME_WIDTH + COLUMN_SPACING;
         
-        guiGraphics.drawString(font, "Price", columnX, headerY, 0xFFFFFF);
-        columnX += PRICE_WIDTH + COLUMN_SPACING;
+        graphics.drawString(font, "Price", currentX, headerY, 0xFFFFFF);
+        currentX += PRICE_WIDTH + COLUMN_SPACING;
         
-        guiGraphics.drawString(font, "Change", columnX, headerY, 0xFFFFFF);
-        columnX += CHANGE_WIDTH + COLUMN_SPACING;
+        graphics.drawString(font, "Change", currentX, headerY, 0xFFFFFF);
+        currentX += CHANGE_WIDTH + COLUMN_SPACING;
         
-        guiGraphics.drawString(font, "Volume", columnX, headerY, 0xFFFFFF);
+        graphics.drawString(font, "Volume", currentX, headerY, 0xFFFFFF);
         
-        // Draw stock rows within viewport
+        // Draw stock rows
         int rowY = headerY + ROW_HEIGHT;
         Map<String, Stock> stocks = stockMarketService.getAllStocks();
-        Portfolio portfolio = stockMarketService.getPortfolio(minecraft.player);
         
-        // Get stocks in visible range
-        int endIndex = Math.min(firstVisibleStockIndex + VISIBLE_ROWS, stocks.size());
         int index = 0;
         for (Stock stock : stocks.values()) {
-            if (index >= firstVisibleStockIndex && index < endIndex) {
-                // Highlight selected stock
-                if (selectedStock != null && stock.getSymbol().equals(selectedStock)) {
-                    guiGraphics.fillGradient(x, rowY - 3, x + SCREEN_WIDTH, rowY + ROW_HEIGHT - 4, 0x40FFFFFF, 0x40FFFFFF);
+            if (index >= firstVisibleStockIndex && index < firstVisibleStockIndex + VISIBLE_ROWS) {
+                currentX = x + 10;
+                
+                // Draw row background (alternate colors)
+                int rowColor = (index % 2 == 0) ? 0xFF333333 : 0xFF383838;
+                if (stock == selectedStock) {
+                    rowColor = 0xFF444499; // Highlight selected stock
                 }
-
-                columnX = x + 10;
+                graphics.fill(x + 1, rowY, x + imageWidth - 1, rowY + ROW_HEIGHT, rowColor);
                 
-                guiGraphics.drawString(font, stock.getSymbol(), columnX, rowY, 0xFFFFFF);
-                columnX += SYMBOL_WIDTH + COLUMN_SPACING;
+                // Symbol
+                graphics.drawString(font, stock.getSymbol(), currentX, rowY + 2, 0xFFFFFF);
+                currentX += SYMBOL_WIDTH + COLUMN_SPACING;
                 
-                String name = stock.getName();
-                if (font.width(name) > NAME_WIDTH) {
-                    name = font.plainSubstrByWidth(name, NAME_WIDTH - 10) + "...";
-                }
-                guiGraphics.drawString(font, name, columnX, rowY, 0xFFFFFF);
-                columnX += NAME_WIDTH + COLUMN_SPACING;
+                // Name
+                graphics.drawString(font, stock.getName(), currentX, rowY + 2, 0xFFFFFF);
+                currentX += NAME_WIDTH + COLUMN_SPACING;
                 
-                guiGraphics.drawString(font, PRICE_FORMAT.format(stock.getCurrentPrice()), columnX, rowY, 0xFFFFFF);
-                columnX += PRICE_WIDTH + COLUMN_SPACING;
+                // Price
+                String price = PRICE_FORMAT.format(stock.getCurrentPrice());
+                graphics.drawString(font, price, currentX, rowY + 2, 0xFFFFFF);
+                currentX += PRICE_WIDTH + COLUMN_SPACING;
                 
-                double change = stock.getPriceChangePercentage();
+                // Change
+                double change = stock.getPriceChange();
                 int changeColor = change >= 0 ? 0x00FF00 : 0xFF0000;
-                String changeText = CHANGE_FORMAT.format(change) + "%";
-                guiGraphics.drawString(font, changeText, columnX, rowY, changeColor);
-                columnX += CHANGE_WIDTH + COLUMN_SPACING;
+                String changeStr = CHANGE_FORMAT.format(change);
+                graphics.drawString(font, changeStr, currentX, rowY + 2, changeColor);
+                currentX += CHANGE_WIDTH + COLUMN_SPACING;
                 
-                guiGraphics.drawString(font, String.format("%,d", stock.getVolume()), columnX, rowY, 0xFFFFFF);
-                columnX += VOLUME_WIDTH + COLUMN_SPACING;
+                // Volume
+                String volume = String.format("%,d", stock.getVolume());
+                graphics.drawString(font, volume, currentX, rowY + 2, 0xFFFFFF);
                 
-                // Draw action icons
-                int iconY = rowY + (ROW_HEIGHT - ACTION_ICON_SIZE) / 2 - 6;
+                // Action buttons
+                currentX += VOLUME_WIDTH + COLUMN_SPACING;
                 
-                // Buy icon (always visible)
-                guiGraphics.renderItem(new ItemStack(Items.EMERALD), 
-                    columnX, iconY);
-                
-                // Sell icon (only if owned)
-                if (portfolio.getHolding(stock.getSymbol()) > 0) {
-                    guiGraphics.renderItem(new ItemStack(Items.REDSTONE), 
-                        columnX + ACTION_ICON_SIZE + 2, iconY);
+                // Buy button
+                if (mouseX >= currentX && mouseX < currentX + ACTION_ICON_SIZE &&
+                    mouseY >= rowY && mouseY < rowY + ACTION_ICON_SIZE) {
+                    graphics.fill(currentX, rowY + 2, currentX + ACTION_ICON_SIZE, rowY + 2 + ACTION_ICON_SIZE, 0xFF00FF00);
+                } else {
+                    graphics.fill(currentX, rowY + 2, currentX + ACTION_ICON_SIZE, rowY + 2 + ACTION_ICON_SIZE, 0xFF009900);
                 }
+                graphics.drawString(font, "+", currentX + 2, rowY + 3, 0xFFFFFF);
+                
+                // Sell button
+                currentX += ACTION_ICON_SIZE + 5;
+                if (mouseX >= currentX && mouseX < currentX + ACTION_ICON_SIZE &&
+                    mouseY >= rowY && mouseY < rowY + ACTION_ICON_SIZE) {
+                    graphics.fill(currentX, rowY + 2, currentX + ACTION_ICON_SIZE, rowY + 2 + ACTION_ICON_SIZE, 0xFFFF0000);
+                } else {
+                    graphics.fill(currentX, rowY + 2, currentX + ACTION_ICON_SIZE, rowY + 2 + ACTION_ICON_SIZE, 0xFF990000);
+                }
+                graphics.drawString(font, "-", currentX + 2, rowY + 3, 0xFFFFFF);
                 
                 rowY += ROW_HEIGHT;
             }
@@ -453,96 +459,124 @@ public class NasdaqTerminalScreen extends Screen {
         }
     }
 
-    private void renderPortfolioSection(GuiGraphics guiGraphics, int x, int y, int width, int height) {
-        // Section title and balance
-        Portfolio portfolio = stockMarketService.getPortfolio(minecraft.player);
-        guiGraphics.drawString(font, "YOUR PORTFOLIO", x + 10, y, 0xFFFFFF);
+    private void drawPortfolioSection(GuiGraphics graphics, int mouseX, int mouseY) {
+        int x = (width - imageWidth) / 2;
+        int y = DEPOSIT_BUTTON_HEIGHT + 10 + MARKET_SECTION_HEIGHT + SECTION_SPACING;
         
-        // Calculate emerald balance
-        int emeraldCount = 0;
-        for (ItemStack stack : minecraft.player.getInventory().items) {
-            if (stack.getItem() == Items.EMERALD) {
-                emeraldCount += stack.getCount();
-            }
+        // Draw section background
+        graphics.fill(x, y, x + imageWidth, y + PORTFOLIO_SECTION_HEIGHT, 0xFF222222);
+        
+        // Draw section title and balance
+        Component sectionTitle = Component.literal("Portfolio").withStyle(ChatFormatting.YELLOW);
+        graphics.drawString(font, sectionTitle, 
+            x + 10, 
+            y + 5, 
+            0xFFFFFF);
+            
+        if (portfolio != null) {
+            String balance = String.format("Balance: %s%s", Config.currencySymbol, 
+                PRICE_FORMAT.format(portfolio.getBalance()));
+            graphics.drawString(font, balance, 
+                x + imageWidth - font.width(balance) - 10, 
+                y + 5, 
+                0x00FF00);
         }
         
-        // Calculate total stock value
-        double stockValue = 0.0;
-        Map<String, Integer> holdings = portfolio.getAllHoldings();
-        Map<String, Stock> stocks = stockMarketService.getAllStocks();
-        for (Map.Entry<String, Integer> entry : holdings.entrySet()) {
-            Stock stock = stocks.get(entry.getKey());
-            if (stock != null) {
-                stockValue += stock.getCurrentPrice() * entry.getValue();
-            }
-        }
+        // Draw column headers
+        int headerY = y + PORTFOLIO_HEADER_HEIGHT;
+        int currentX = x + 10;
         
-        // Display wealth breakdown
-        String wealthText = String.format("Wealth: %d emeralds (Bank: %.2f, Stocks: %.2f)", 
-            emeraldCount, portfolio.getBalance(), stockValue);
-        guiGraphics.drawString(font, wealthText, x + width - font.width(wealthText) - 10, y, 0xFFFFFF);
+        graphics.drawString(font, "Symbol", currentX, headerY, 0xFFFFFF);
+        currentX += SYMBOL_WIDTH + COLUMN_SPACING;
         
-        // Draw headers
-        int headerY = y + HEADER_HEIGHT;
-        int columnX = x + 10;
-
-        guiGraphics.fillGradient(x, headerY - 2, x + SCREEN_WIDTH, headerY + ROW_HEIGHT - 4, 0x40FFFFFF, 0x40FFFFFF);
+        graphics.drawString(font, "Quantity", currentX, headerY, 0xFFFFFF);
+        currentX += PRICE_WIDTH + COLUMN_SPACING;
         
-        guiGraphics.drawString(font, "Symbol", columnX, headerY, 0xFFFFFF);
-        columnX += SYMBOL_WIDTH + COLUMN_SPACING;
+        graphics.drawString(font, "Avg Price", currentX, headerY, 0xFFFFFF);
+        currentX += PRICE_WIDTH + COLUMN_SPACING;
         
-        guiGraphics.drawString(font, "Quantity", columnX, headerY, 0xFFFFFF);
-        columnX += PRICE_WIDTH + COLUMN_SPACING;
+        graphics.drawString(font, "Current", currentX, headerY, 0xFFFFFF);
+        currentX += PRICE_WIDTH + COLUMN_SPACING;
         
-        guiGraphics.drawString(font, "Avg Price", columnX, headerY, 0xFFFFFF);
-        columnX += PRICE_WIDTH + COLUMN_SPACING;
+        graphics.drawString(font, "P/L", currentX, headerY, 0xFFFFFF);
         
-        guiGraphics.drawString(font, "Current", columnX, headerY, 0xFFFFFF);
-        columnX += PRICE_WIDTH + COLUMN_SPACING;
-        
-        guiGraphics.drawString(font, "P/L", columnX, headerY, 0xFFFFFF);
-
-        // Draw holdings within viewport
-        int rowY = headerY + ROW_HEIGHT;
-        int endIndex = Math.min(firstVisiblePortfolioIndex + VISIBLE_ROWS, holdings.size());
-        
-        // Get holdings in visible range
-        int index = 0;
-        for (Map.Entry<String, Integer> entry : holdings.entrySet()) {
-            if (index >= firstVisiblePortfolioIndex && index < endIndex) {
-                String symbol = entry.getKey();
-                int quantity = entry.getValue();
-                Stock stock = stocks.get(symbol);
-                
-                if (stock != null) {
-                    columnX = x + 10;
+        // Draw portfolio items
+        if (portfolio != null) {
+            int rowY = headerY + ROW_HEIGHT;
+            Map<String, Integer> holdings = portfolio.getAllHoldings();
+            
+            int index = 0;
+            for (Map.Entry<String, Integer> entry : holdings.entrySet()) {
+                if (index >= firstVisiblePortfolioIndex && 
+                    index < firstVisiblePortfolioIndex + VISIBLE_ROWS && 
+                    entry.getValue() > 0) {
                     
-                    guiGraphics.drawString(font, symbol, columnX, rowY, 0xFFFFFF);
-                    columnX += SYMBOL_WIDTH + COLUMN_SPACING;
-                    
-                    guiGraphics.drawString(font, String.format("%,d", quantity), columnX, rowY, 0xFFFFFF);
-                    columnX += PRICE_WIDTH + COLUMN_SPACING;
-                    
-                    guiGraphics.drawString(font, PRICE_FORMAT.format(stock.getPreviousPrice()), columnX, rowY, 0xFFFFFF);
-                    columnX += PRICE_WIDTH + COLUMN_SPACING;
-                    
-                    double currentPrice = stock.getCurrentPrice();
-                    guiGraphics.drawString(font, PRICE_FORMAT.format(currentPrice), columnX, rowY, 0xFFFFFF);
-                    columnX += PRICE_WIDTH + COLUMN_SPACING;
-                    
-                    double profitLoss = (currentPrice - stock.getPreviousPrice()) * quantity;
-                    int profitColor = profitLoss >= 0 ? 0x00FF00 : 0xFF0000;
-                    guiGraphics.drawString(font, PRICE_FORMAT.format(profitLoss), columnX, rowY, profitColor);
+                    int quantity = entry.getValue();
+                    Stock stock = stockMarketService.getStock(entry.getKey());
+                    if (stock != null) {
+                        currentX = x + 10;
+                        
+                        // Draw row background
+                        int rowColor = (index % 2 == 0) ? 0xFF333333 : 0xFF383838;
+                        graphics.fill(x + 1, rowY, x + imageWidth - 1, rowY + ROW_HEIGHT, rowColor);
+                        
+                        // Symbol
+                        graphics.drawString(font, entry.getKey(), currentX, rowY + 2, 0xFFFFFF);
+                        currentX += SYMBOL_WIDTH + COLUMN_SPACING;
+                        
+                        // Quantity
+                        String quantityStr = String.format("%d", quantity);
+                        graphics.drawString(font, quantityStr, currentX, rowY + 2, 0xFFFFFF);
+                        currentX += PRICE_WIDTH + COLUMN_SPACING;
+                        
+                        // Average Price (using current price as placeholder since we don't track avg price)
+                        String avgPrice = PRICE_FORMAT.format(stock.getCurrentPrice());
+                        graphics.drawString(font, avgPrice, currentX, rowY + 2, 0xFFFFFF);
+                        currentX += PRICE_WIDTH + COLUMN_SPACING;
+                        
+                        // Current Price
+                        String currentPrice = PRICE_FORMAT.format(stock.getCurrentPrice());
+                        graphics.drawString(font, currentPrice, currentX, rowY + 2, 0xFFFFFF);
+                        currentX += PRICE_WIDTH + COLUMN_SPACING;
+                        
+                        // Profit/Loss (simplified since we don't track avg price)
+                        double pl = 0.0; // We can't calculate P/L without avg price
+                        int plColor = pl >= 0 ? 0x00FF00 : 0xFF0000;
+                        String plStr = PRICE_FORMAT.format(pl);
+                        graphics.drawString(font, plStr, currentX, rowY + 2, plColor);
+                        
+                        rowY += ROW_HEIGHT;
+                    }
                 }
-                
-                rowY += ROW_HEIGHT;
+                index++;
             }
-            index++;
         }
+    }
+
+    private void drawScrollBar(GuiGraphics graphics, int mouseX, int mouseY, int totalHeight, int visibleHeight) {
+        int scrollBarX = leftPos + imageWidth - SCROLL_BAR_WIDTH - SCROLL_BAR_PADDING;
+        int scrollBarY = topPos + 20;
+        int scrollBarHeight = height - 40;
+        
+        // Draw scroll bar track
+        graphics.fill(scrollBarX, scrollBarY, scrollBarX + SCROLL_BAR_WIDTH, scrollBarY + scrollBarHeight, 0x80000000);
+        
+        // Calculate thumb size and position
+        int thumbHeight = (int)((float)visibleHeight / totalHeight * scrollBarHeight);
+        int thumbY = scrollBarY + (int)((float)scrollOffset / (totalHeight - visibleHeight) * (scrollBarHeight - thumbHeight));
+        
+        // Draw scroll bar thumb
+        graphics.fill(scrollBarX, thumbY, scrollBarX + SCROLL_BAR_WIDTH, thumbY + thumbHeight, 0xFFFFFFFF);
     }
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (showTransactionPopup && quantityInput.isFocused()) {
+            return quantityInput.keyPressed(keyCode, scanCode, modifiers);
+        }
+        if (showDepositPopup && depositInput.isFocused()) {
+            return depositInput.keyPressed(keyCode, scanCode, modifiers);
+        }
         if (keyCode == 256) { // ESC key
             this.minecraft.setScreen(null);
             return true;
@@ -551,97 +585,173 @@ public class NasdaqTerminalScreen extends Screen {
     }
 
     @Override
+    public boolean charTyped(char codePoint, int modifiers) {
+        if (showTransactionPopup && quantityInput.isFocused()) {
+            return quantityInput.charTyped(codePoint, modifiers);
+        }
+        if (showDepositPopup && depositInput.isFocused()) {
+            return depositInput.charTyped(codePoint, modifiers);
+        }
+        return super.charTyped(codePoint, modifiers);
+    }
+
+    @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (showTransactionPopup || showDepositPopup) {
-            // Only handle popup interactions when it's visible
-            int popupX = width / 2 - POPUP_WIDTH / 2;
-            int popupY = height / 2 - POPUP_HEIGHT / 2;
+        if (super.mouseClicked(mouseX, mouseY, button)) {
+            return true;
+        }
+
+        // Get screen coordinates
+        int x = (width - imageWidth) / 2;
+        int y = (height - imageHeight) / 2 + TITLE_HEIGHT + SECTION_SPACING;
+        
+        // Check if click is in market section
+        if (mouseY >= y + HEADER_HEIGHT && mouseY < y + MARKET_SECTION_HEIGHT) {
+            int rowY = y + HEADER_HEIGHT + ROW_HEIGHT;
+            Map<String, Stock> stocks = stockMarketService.getAllStocks();
             
-            // Check if click is within popup bounds
-            if (mouseX >= popupX && mouseX <= popupX + POPUP_WIDTH &&
-                mouseY >= popupY && mouseY <= popupY + POPUP_HEIGHT) {
-                return super.mouseClicked(mouseX, mouseY, button);
-            }
-            return true; // Block clicks outside popup
-        } else {
-            // Check if click is in market section
-            int marketY = TITLE_HEIGHT;
-            int headerY = marketY + HEADER_HEIGHT;
-            int contentY = headerY + ROW_HEIGHT;
-            
-            // Only check clicks in the content area (below header)
-            if ((int)mouseY >= contentY && (int)mouseY < contentY + (VISIBLE_ROWS * ROW_HEIGHT)) {
-                int relativeY = (int)mouseY - contentY;
-                int clickedRow = relativeY / ROW_HEIGHT;
-                
-                if (clickedRow >= 0 && clickedRow < VISIBLE_ROWS) {
-                    int stockIndex = firstVisibleStockIndex + clickedRow;
-                    
-                    // Get the stock at this index
-                    Map<String, Stock> stocks = stockMarketService.getAllStocks();
-                    int index = 0;
-                    Stock clickedStock = null;
-                    
-                    // Find the stock at the calculated index
-                    for (Stock stock : stocks.values()) {
-                        if (index == stockIndex) {
-                            clickedStock = stock;
-                            break;
-                        }
-                        index++;
-                    }
-                    
-                    if (clickedStock != null) {
-                        selectedStock = clickedStock.getSymbol();
+            int index = 0;
+            for (Stock stock : stocks.values()) {
+                if (index >= firstVisibleStockIndex && index < firstVisibleStockIndex + VISIBLE_ROWS) {
+                    if (mouseY >= rowY && mouseY < rowY + ROW_HEIGHT) {
+                        // Calculate button positions
+                        int buttonX = x + imageWidth - ACTIONS_WIDTH - COLUMN_SPACING;
                         
-                        // Check if clicking on action icons
-                        int actionsX = 10 + SYMBOL_WIDTH + NAME_WIDTH + PRICE_WIDTH + CHANGE_WIDTH + VOLUME_WIDTH + (COLUMN_SPACING * 5);
-                        
-                        if ((int)mouseX >= actionsX && (int)mouseX < actionsX + ACTION_ICON_SIZE) {
-                            // Buy icon clicked
+                        // Buy button
+                        if (mouseX >= buttonX && mouseX < buttonX + ACTION_ICON_SIZE &&
+                            mouseY >= rowY + 2 && mouseY < rowY + 2 + ACTION_ICON_SIZE) {
+                            selectedStock = stock;
                             showTransactionPopup("buy");
-                        } else if (stockMarketService.getPortfolio(minecraft.player).getHolding(clickedStock.getSymbol()) > 0 && 
-                                 (int)mouseX >= actionsX + ACTION_ICON_SIZE + 2 && 
-                                 (int)mouseX < actionsX + ACTION_ICON_SIZE * 2 + 2) {
-                            // Sell icon clicked
-                            showTransactionPopup("sell");
+                            return true;
                         }
+                        
+                        // Sell button
+                        buttonX += ACTION_ICON_SIZE + 5;
+                        if (mouseX >= buttonX && mouseX < buttonX + ACTION_ICON_SIZE &&
+                            mouseY >= rowY + 2 && mouseY < rowY + 2 + ACTION_ICON_SIZE) {
+                            selectedStock = stock;
+                            showTransactionPopup("sell");
+                            return true;
+                        }
+                        
+                        // Select stock for viewing details
+                        selectedStock = stock;
                         return true;
                     }
+                    rowY += ROW_HEIGHT;
                 }
+                index++;
             }
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        
+        return false;
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0) {
+            isScrolling = false;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (isScrolling) {
+            // Calculate total content height
+            int totalContentHeight = MARKET_SECTION_HEIGHT;
+            totalContentHeight += PORTFOLIO_SECTION_HEIGHT;
+            
+            // Calculate visible area
+            int visibleHeight = height - 40;
+            
+            // Calculate scroll amount based on mouse movement
+            int deltaY = (int)mouseY - lastMouseY;
+            int scrollAmount = (int)((float)deltaY / (height - 40) * (totalContentHeight - visibleHeight));
+            
+            // Update scroll offset
+            scrollOffset = Math.max(0, Math.min(scrollOffset + scrollAmount, Math.max(0, totalContentHeight - visibleHeight)));
+            
+            lastMouseY = (int)mouseY;
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
-        // Allow scrolling only when not in a popup
-        if (!showTransactionPopup && !showDepositPopup) {
-            int marketY = TITLE_HEIGHT;
-            int portfolioY = marketY + (VISIBLE_ROWS + 1) * ROW_HEIGHT + SECTION_SPACING;
+        // Calculate total content height
+        int totalContentHeight = MARKET_SECTION_HEIGHT;
+        totalContentHeight += PORTFOLIO_SECTION_HEIGHT;
+        
+        // Calculate visible area
+        int visibleHeight = height - 40;
+        
+        // Update scroll offset (20 pixels per scroll step)
+        int scrollStep = 20;
+        int scrollAmount = (int)(delta * scrollStep);
+        scrollOffset = Math.max(0, Math.min(scrollOffset + scrollAmount, Math.max(0, totalContentHeight - visibleHeight)));
+        return true;
+    }
+
+    private void drawHeader(GuiGraphics graphics) {
+        graphics.drawString(font, "NASDAQ Terminal", leftPos + 10, topPos + 10, 0xFFFFFF);
+    }
+
+    private void drawFooter(GuiGraphics graphics) {
+        String balance = String.format("Balance: %.2f", portfolio.getBalance());
+        graphics.drawString(font, balance, leftPos + 10, topPos + height - 20, 0xFFFFFF);
+    }
+
+    private void drawTransactionPopup(GuiGraphics graphics, int mouseX, int mouseY) {
+        int x = (width - POPUP_WIDTH) / 2;
+        int y = (height - POPUP_HEIGHT) / 2;
+        
+        // Draw popup background
+        graphics.fill(x, y, x + POPUP_WIDTH, y + POPUP_HEIGHT, 0xFF222222);
+        graphics.fill(x + 1, y + 1, x + POPUP_WIDTH - 1, y + POPUP_HEIGHT - 1, 0xFF444444);
+        
+        // Draw title
+        String title = transactionType.equals("buy") ? "Buy Stock" : "Sell Stock";
+        graphics.drawString(font, title, 
+            x + (POPUP_WIDTH - font.width(title)) / 2, 
+            y + 10, 
+            0xFFFFFF);
             
-            // Check if mouse is in market section
-            if ((int)mouseY >= marketY && (int)mouseY < marketY + (VISIBLE_ROWS + 1) * ROW_HEIGHT) {
-                // Update first visible stock index
-                int totalStocks = stockMarketService.getAllStocks().size();
-                firstVisibleStockIndex = Math.max(0, Math.min(
-                    firstVisibleStockIndex - (int)delta,
-                    totalStocks - VISIBLE_ROWS
-                ));
-                return true;
-            }
-            // Check if mouse is in portfolio section
-            else if ((int)mouseY >= portfolioY && (int)mouseY < portfolioY + (VISIBLE_ROWS + 1) * ROW_HEIGHT) {
-                // Update first visible portfolio index
-                int totalHoldings = stockMarketService.getPortfolio(minecraft.player).getAllHoldings().size();
-                firstVisiblePortfolioIndex = Math.max(0, Math.min(
-                    firstVisiblePortfolioIndex - (int)delta,
-                    totalHoldings - VISIBLE_ROWS
-                ));
-                return true;
-            }
+        // Draw quantity label
+        graphics.drawString(font, "Quantity:", 
+            x + 10, 
+            y + 30, 
+            0xFFFFFF);
+    }
+
+    private void drawDepositPopup(GuiGraphics graphics, int mouseX, int mouseY) {
+        int x = (width - POPUP_WIDTH) / 2;
+        int y = (height - POPUP_HEIGHT) / 2;
+        
+        // Draw popup background
+        graphics.fill(x, y, x + POPUP_WIDTH, y + POPUP_HEIGHT, 0xFF222222);
+        graphics.fill(x + 1, y + 1, x + POPUP_WIDTH - 1, y + POPUP_HEIGHT - 1, 0xFF444444);
+        
+        // Draw title
+        String title = "Deposit Emeralds";
+        graphics.drawString(font, title, 
+            x + (POPUP_WIDTH - font.width(title)) / 2, 
+            y + 10, 
+            0xFFFFFF);
+            
+        // Draw amount label
+        graphics.drawString(font, "Amount:", 
+            x + 10, 
+            y + 30, 
+            0xFFFFFF);
+            
+        // Draw error message if any
+        if (depositErrorMessage != null) {
+            graphics.drawString(font, depositErrorMessage, 
+                x + 10, 
+                y + POPUP_HEIGHT - 30, 
+                0xFF0000);
         }
-        return false;
     }
 } 
