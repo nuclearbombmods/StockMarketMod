@@ -603,7 +603,7 @@ public class NasdaqTerminalScreen extends Screen {
 
         // Get screen coordinates
         int x = (width - imageWidth) / 2;
-        int y = (height - imageHeight) / 2 + TITLE_HEIGHT + SECTION_SPACING;
+        int y = DEPOSIT_BUTTON_HEIGHT + 10; // Match the y position used in drawMarketSection
         
         // Check if click is in market section
         if (mouseY >= y + HEADER_HEIGHT && mouseY < y + MARKET_SECTION_HEIGHT) {
