@@ -658,21 +658,19 @@ public class NasdaqTerminalScreen extends Screen {
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
         if (isScrolling) {
-            // Calculate total content height
-            int totalContentHeight = MARKET_SECTION_HEIGHT;
-            totalContentHeight += PORTFOLIO_SECTION_HEIGHT;
+            Map<String, Stock> stocks = stockMarketService.getAllStocks();
+            int totalStocks = stocks.size();
             
-            // Calculate visible area
-            int visibleHeight = height - 40;
-            
-            // Calculate scroll amount based on mouse movement
+            // Calculate drag amount in terms of rows
             int deltaY = (int)mouseY - lastMouseY;
-            int scrollAmount = (int)((float)deltaY / (height - 40) * (totalContentHeight - visibleHeight));
+            int rowsToScroll = deltaY / ROW_HEIGHT;
             
-            // Update scroll offset
-            scrollOffset = Math.max(0, Math.min(scrollOffset + scrollAmount, Math.max(0, totalContentHeight - visibleHeight)));
-            
-            lastMouseY = (int)mouseY;
+            if (rowsToScroll != 0) {
+                // Update firstVisibleStockIndex based on drag direction
+                firstVisibleStockIndex = Math.max(0, Math.min(totalStocks - VISIBLE_ROWS, 
+                    firstVisibleStockIndex + rowsToScroll));
+                lastMouseY = (int)mouseY;
+            }
             return true;
         }
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
@@ -680,17 +678,16 @@ public class NasdaqTerminalScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
-        // Calculate total content height
-        int totalContentHeight = MARKET_SECTION_HEIGHT;
-        totalContentHeight += PORTFOLIO_SECTION_HEIGHT;
+        Map<String, Stock> stocks = stockMarketService.getAllStocks();
+        int totalStocks = stocks.size();
         
-        // Calculate visible area
-        int visibleHeight = height - 40;
+        // Update firstVisibleStockIndex based on scroll direction
+        if (delta > 0) { // Scrolling up
+            firstVisibleStockIndex = Math.max(0, firstVisibleStockIndex - 1);
+        } else { // Scrolling down
+            firstVisibleStockIndex = Math.min(totalStocks - VISIBLE_ROWS, firstVisibleStockIndex + 1);
+        }
         
-        // Update scroll offset (20 pixels per scroll step)
-        int scrollStep = 20;
-        int scrollAmount = (int)(delta * scrollStep);
-        scrollOffset = Math.max(0, Math.min(scrollOffset + scrollAmount, Math.max(0, totalContentHeight - visibleHeight)));
         return true;
     }
 
